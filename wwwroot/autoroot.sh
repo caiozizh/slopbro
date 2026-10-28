@@ -11,6 +11,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(dirname -- "${0}")}"
 DEBUG="${DEBUG:-}"
 IPK_SRC="${IPK_SRC:-"${SCRIPT_DIR}/hbchannel.ipk"}"
 IPK_URL='https://github.com/webosbrew/webos-homebrew-channel/releases/download/v0.7.3/org.webosbrew.hbchannel_0.7.3_all.ipk'
+IPK_SHA256='d10bf3c753551d7c72fb7a92b20fcd2317e502a220ac668ba8e76f6ea78b363c'
 SCRIPT_NAME='SlopBro'
 
 is_root() {
@@ -126,6 +127,41 @@ download_file() {
     else
         curl -L -o "${dl_path}" -- "${dl_url}"
     fi
+}
+
+verify_file_sha256() {
+    expected="${1}"
+    file="${2}"
+
+    actual="$(openssl dgst -sha256 "${file}" 2>/dev/null | sed -e 's/^.*= //')"
+    if [ -z "${actual}" ]; then
+        error "Could not calculate SHA-256 for ${file}"
+        return 1
+    fi
+
+    if [ "${actual}" != "${expected}" ]; then
+        error "SHA-256 mismatch for ${file}; refusing to install"
+        log "Expected SHA-256: ${expected}"
+        log "Actual SHA-256:   ${actual}"
+        return 1
+    fi
+
+    log "Verified Homebrew Channel SHA-256"
+    return 0
+}
+
+disable_homebrew_telnet() {
+    telnet_disabled='/var/luna/preferences/webosbrew_telnet_disabled'
+
+    if [ ! -e "${telnet_disabled}" ]; then
+        if ! touch -- "${telnet_disabled}"; then
+            error 'Could not create Homebrew Channel Telnet-disable marker'
+            exit 1
+        fi
+        chmod 600 -- "${telnet_disabled}" 2>/dev/null || true
+    fi
+
+    log 'Homebrew Channel Telnet is disabled by default'
 }
 
 sd_script='/media/cryptofs/apps/usr/palm/services/com.palmdts.devmode.service/start-devmode.sh'
@@ -278,6 +314,7 @@ perform_root() {
         sleep "${sleep_secs}"
     done
 
+    disable_homebrew_telnet
     elevate_hbchannel
 
     log 'Homebrew Channel has been elevated'
@@ -427,6 +464,10 @@ else
         error "Failed to download Homebrew Channel IPK from ${IPK_URL}"
         exit 1
     fi
+fi
+
+if ! verify_file_sha256 "${IPK_SHA256}" "${ipk}"; then
+    exit 1
 fi
 
 perform_root
